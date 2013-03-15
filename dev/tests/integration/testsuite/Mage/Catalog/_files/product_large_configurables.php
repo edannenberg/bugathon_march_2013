@@ -3,7 +3,7 @@
 Mage::app()->reinitStores();
 Mage::app()->setCurrentStore(Mage_Core_Model_Store::ADMIN_CODE);
 
-$numConfigurables = 16;
+$numConfigurables = 2;
 $numAssociatedSimples = 20;
 $disabledModulus = 10;
 /** @var $attributeOptions Mage_Eav_Model_Resource_Entity_Attribute_Option_Collection[] */

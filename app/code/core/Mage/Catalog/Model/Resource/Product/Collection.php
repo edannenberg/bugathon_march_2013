@@ -45,6 +45,13 @@ class Mage_Catalog_Model_Resource_Product_Collection extends Mage_Catalog_Model_
     const MAIN_TABLE_ALIAS = 'e';
 
     /**
+     * Flag code for loading of associated data
+     *
+     * @var string
+     */
+    const FLAG_LOAD_ASSOCIATED_DATA = 'load_associated_data';
+
+    /**
      * Catalog Product Flat is enabled cache per store
      *
      * @var array

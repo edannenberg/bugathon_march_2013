@@ -15,11 +15,13 @@ class Mage_Catalog_Model_Resource_Product_Configurable_CollectionTest
      */
     public function productCollectionDataProvider()
     {
-        $numConfigurables = 16;
+        $numConfigurables = 2;
         $numAssociatedSimples = 20;
-        $disabledModulus = 10;
         return array(
-            array($numConfigurables, $numAssociatedSimples - floor($numAssociatedSimples / $disabledModulus))
+            array(
+                $numConfigurables,
+                $numAssociatedSimples
+            )
         );
     }
 
@@ -27,58 +29,158 @@ class Mage_Catalog_Model_Resource_Product_Configurable_CollectionTest
      * @test
      * @dataProvider productCollectionDataProvider
      */
-    public function loadProductCollection($numConfigurables, $numActiveAssociatedSimples)
+    public function loadProductCollection($numConfigurables, $numAssociatedSimples)
     {
+        /** @var $collection Mage_Catalog_Model_Resource_Product_Collection */
         $collection = new Mage_Catalog_Model_Resource_Product_Collection();
         $collection->addFieldToFilter('type_id', Mage_Catalog_Model_Product_Type::TYPE_CONFIGURABLE)
-            ->setStoreId(Mage::app()->getDefaultStoreView()->getId());
+                   ->addStoreFilter(Mage::app()->getDefaultStoreView()->getId());
 
         $this->assertEquals(
-            $numConfigurables, $collection->count(),
-            "Expected $numConfigurables products in the collection, found {$collection->count()}."
+            $numConfigurables,
+            $collection->count(),
+            'Expected number of configurable products in the collection does not match expected one.'
         );
 
         foreach ($collection as $product) {
-            /** @var $product Mage_Catalog_Model_Product */
-            $usedProducts = (array) $product->getTypeInstance()->getUsedProducts($product);
-            $this->assertEquals(
-                count($usedProducts), $numActiveAssociatedSimples,
-                "Expected $numActiveAssociatedSimples associated simple products, found "  . count($usedProducts)
+            $this->assertConfigurableIntegrity(
+                $product,
+                $numAssociatedSimples
             );
         }
     }
 
     /**
      * @test
+     * @dataProvider productCollectionDataProvider
      */
-    public function loadTimeIsFasterForProductCollectionWithFlagThenWithoutFlag()
+    public function loadTimeIsFasterForProductCollectionWithFlagThenWithoutFlag(
+        $numConfigurables,
+        $numAssociatedSimples
+    )
     {
+        /** @var $collectionWithoutFlag Mage_Catalog_Model_Resource_Product_Collection */
         $collectionWithoutFlag = new Mage_Catalog_Model_Resource_Product_Collection();
         $collectionWithoutFlag->addFieldToFilter('type_id', Mage_Catalog_Model_Product_Type::TYPE_CONFIGURABLE);
-        $collectionWithoutFlag->setStoreId(Mage::app()->getDefaultStoreView()->getId());
+        $collectionWithoutFlag->addStoreFilter(Mage::app()->getDefaultStoreView()->getId());
 
+        $this->assertEquals(
+            $numConfigurables,
+            $collectionWithoutFlag->count(),
+            'Product count in collection without flag is wrong.'
+        );
+
+        /** @var $collectionWithFlag Mage_Catalog_Model_Product[]|Mage_Catalog_Model_Resource_Product_Collection */
         $collectionWithFlag = clone $collectionWithoutFlag;
-        $collectionWithFlag->setFlag('load_associated_products', true);
+        $collectionWithFlag->setFlag(
+            Mage_Catalog_Model_Resource_Product_Collection::FLAG_LOAD_ASSOCIATED_DATA,
+            true
+        );
 
-        /** @var $product Mage_Catalog_Model_Product */
+        $this->assertEquals(
+            $numConfigurables,
+            $collectionWithFlag->count(),
+            'Product count in collection with flag is wrong.'
+        );
 
+        /* @var $typeInstance Mage_Catalog_Model_Product_Type_Configurable */
         $withFlagLoadStart = microtime(true);
-        foreach ($collectionWithFlag->load() as $product) {
-            // Load the used products
-            $product->getTypeInstance(true)->getUsedProducts(null, $product);
+        foreach ($collectionWithFlag as $product) {
+            // Test integrity of the configurable products with collection flag
+            $this->assertConfigurableIntegrity(
+                $product,
+                $numAssociatedSimples
+            );
         }
         $withFlagLoadTime = microtime(true) - $withFlagLoadStart;
 
         $withoutFlagLoadStart = microtime(true);
-        foreach ($collectionWithoutFlag->load() as $product) {
-            // Load the used products
-            $product->getTypeInstance(true)->getUsedProducts(null, $product);
+        foreach ($collectionWithoutFlag as $product) {
+            // Test integrity of the configurable products without collection flag
+            $this->assertConfigurableIntegrity(
+                $product,
+                $numAssociatedSimples
+            );
         }
         $withoutLoadTime= microtime(true) - $withoutFlagLoadStart;
 
         $this->assertLessThan(
-            $withoutLoadTime, $withFlagLoadTime,
-            "Collection load time with set flag ($withFlagLoadTime) is not slower then load time without the flag ($withoutLoadTime)"
+            $withoutLoadTime / 2, # Should be at least 2 times faster
+            $withFlagLoadTime,
+            "Collection load time with set flag is slower then load time without the flag"
         );
+    }
+
+    /**
+     * Asserts integrity of configurable products
+     *
+     * @param Mage_Catalog_Model_Product $product
+     * @param int $numActiveAssociatedSimples
+     */
+    public function assertConfigurableIntegrity($product, $numAssociatedSimples)
+    {
+        $configurableIndex = substr($product->getSku(), 12);
+        $expectedAssiatedSimplePrefix = 'simple_' . $configurableIndex . '.';
+        $expectedAttributeConfigPrefix = 'test_large_configurable' . $configurableIndex;
+
+        /* @var $typeInstance Mage_Catalog_Model_Product_Type_Configurable */
+        /* @var $usedProducts Mage_Catalog_Model_Product[] */
+        /* @var $usedAttributes Mage_Catalog_Model_Product_Type_Configurable_Attribute[] */
+        $typeInstance = $product->getTypeInstance(true);
+
+        $usedAttributes = $typeInstance->getConfigurableAttributes($product);
+
+        $this->assertCount(
+            1,
+            $usedAttributes,
+            'Expected configurable attributes count does not match actual'
+        );
+
+        foreach ($usedAttributes as $attribute) {
+            $this->assertStringStartsWith(
+                $expectedAttributeConfigPrefix,
+                $attribute->getProductAttribute()->getAttributeCode(),
+                'Configurable attribute is not valid'
+            );
+        }
+
+        $usedProducts = (array) $typeInstance->getUsedProducts(null, $product);
+        $this->assertCount(
+            $numAssociatedSimples,
+            $usedProducts,
+            'Expected associated simple products count does not match actual'
+        );
+
+        foreach ($usedProducts as $simpleProduct) {
+            $this->assertStringStartsWith(
+                $expectedAssiatedSimplePrefix,
+                $simpleProduct->getSku(),
+                'Simple product does not match configurable index'
+            );
+
+            $this->assertEquals(
+                10,
+                $simpleProduct->getFinalPrice(),
+                'Price is not loaded for simple product' . $simpleProduct->getSku()
+            );
+
+            $simpleIndex = substr(
+                $simpleProduct->getSku(),
+                strlen($expectedAssiatedSimplePrefix)
+            );
+
+            foreach ($usedAttributes as $attribute) {
+                $this->assertEquals(
+                    'Option ' . $configurableIndex . '.' . ($simpleIndex+1),
+                    $simpleProduct->getAttributeText(
+                        $attribute->getProductAttribute()->getAttributeCode()
+                    )
+                );
+            }
+        }
+
+
+
+
     }
 }
