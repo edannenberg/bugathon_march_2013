@@ -817,7 +817,7 @@ class Mage_Catalog_Model_Url
                 }
             }
 
-            $fullPath = $requestPath.$suffix;
+            $fullPath = $existingRequestPath.$suffix;
             if ($this->_deleteOldTargetPath($fullPath, $idPath, $storeId)) {
                 return $fullPath;
             }
